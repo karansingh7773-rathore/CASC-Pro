@@ -7,6 +7,7 @@ import config
 import os
 import time
 import google.generativeai as genai
+import sys
 
 def encode_frame_to_base64(frame):
     """Convert OpenCV frame to base64 string."""
@@ -228,16 +229,16 @@ def upload_video_to_gemini(video_path):
         # Configure the API
         genai.configure(api_key=config.GOOGLE_API_KEY)
         
-        print(f"[GEMINI] Uploading video file: {video_path}")
+        print(f"[AI] Uploading video file: {video_path}")
         
         # Upload the file
         video_file = genai.upload_file(path=video_path)
-        
-        print(f"[GEMINI] Upload complete. File URI: {video_file.uri}")
+
+        print(f"[AI] Upload complete. File URI: {video_file.uri}")
         
         # Wait for file to be processed
         while video_file.state.name == "PROCESSING":
-            print("[GEMINI] Processing video...")
+            print("[AI] Processing video...")
             time.sleep(2)
             video_file = genai.get_file(video_file.name)
         
@@ -253,15 +254,15 @@ def upload_video_to_gemini(video_path):
 def upload_video_to_gemini_api(video_path):
     """Upload video using Google AI File API (REST) - Simplified approach."""
     try:
-        print(f"[GEMINI] Uploading video file: {video_path}")
+        print(f"[AI] Uploading video file: {video_path}")
         
         # Check file size
         file_size = os.path.getsize(video_path)
         file_size_mb = file_size / (1024 * 1024)
-        print(f"[GEMINI] Video size: {file_size_mb:.2f} MB")
+        print(f"[AI] Video size: {file_size_mb:.2f} MB")
         
         if file_size_mb > 100:
-            print("[GEMINI ERROR] Video file too large (max 100MB)")
+            print("[AI ERROR] Video file too large (max 100MB)")
             return None
         
         # Use multipart upload (simpler method)
@@ -286,7 +287,7 @@ def upload_video_to_gemini_api(video_path):
             response = requests.post(url, headers=headers, files=files, timeout=120)
         
         if response.status_code not in [200, 201]:
-            print(f"[GEMINI ERROR] Upload failed: {response.text}")
+            print(f"[AI ERROR] Upload failed: {response.text}")
             return None
         
         result = response.json()
@@ -295,13 +296,13 @@ def upload_video_to_gemini_api(video_path):
         file_name = file_info.get('name')
         
         if not file_uri:
-            print(f"[GEMINI ERROR] No file URI in response: {result}")
+            print(f"[AI ERROR] No file URI in response: {result}")
             return None
-        
-        print(f"[GEMINI] Video uploaded successfully: {file_name}")
-        
+
+        print(f"[AI] Video uploaded successfully: {file_name}")
+
         # Wait for processing
-        print("[GEMINI] Waiting for video processing...")
+        print("[AI] Waiting for video processing...")
         max_wait = 120  # Increased timeout for larger videos
         start_time = time.time()
         
@@ -313,21 +314,21 @@ def upload_video_to_gemini_api(video_path):
                 state = status_response.json().get('state')
                 
                 if state == 'ACTIVE':
-                    print("[GEMINI] Video processing complete")
+                    print("[AI] Video processing complete")
                     return file_uri
                 elif state == 'FAILED':
-                    print("[GEMINI ERROR] Video processing failed")
+                    print("[AI ERROR] Video processing failed")
                     return None
                 elif state == 'PROCESSING':
-                    print("[GEMINI] Still processing... (patience)")
-            
+                    print("[AI] Still processing... (patience)")
+
             time.sleep(3)
-        
-        print("[GEMINI ERROR] Video processing timeout")
+
+        print("[AI ERROR] Video processing timeout")
         return None
         
     except Exception as e:
-        print(f"[GEMINI ERROR] Failed to upload video: {e}")
+        print(f"[AI ERROR] Failed to upload video: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -349,17 +350,17 @@ def call_gemini_video_analysis(video_path, event_id):
     try:
         # Check if video file exists
         if not os.path.exists(video_path):
-            print(f"[GEMINI ERROR] Video file not found: {video_path}")
+            print(f"[AI ERROR] Video file not found: {video_path}")
             return None
         
         video_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-        print(f"\n[GEMINI] Analyzing video: {os.path.basename(video_path)} ({video_size_mb:.2f} MB)")
-        
+        print(f"\n[AI] Analyzing video: {os.path.basename(video_path)} ({video_size_mb:.2f} MB)")
+
         # Upload video to Gemini
         file_uri = upload_video_to_gemini(video_path)
         
         if not file_uri:
-            print("[GEMINI ERROR] Failed to upload video")
+            print("[AI ERROR] Failed to upload video")
             return None
         
         # Prepare the generation request
@@ -397,8 +398,8 @@ Be thorough, detailed, and professional."""
                 "maxOutputTokens": 2048
             }
         }
-        
-        print("[GEMINI] Generating comprehensive video analysis...")
+
+        print("[AI] Generating comprehensive video analysis...")
         print("="*70)
         
         response = requests.post(generation_url, json=payload, timeout=120)
@@ -410,18 +411,18 @@ Be thorough, detailed, and professional."""
             summary = result['candidates'][0]['content']['parts'][0]['text']
             
             print("\n" + "="*70)
-            print("[GEMINI 2.5 FLASH - VIDEO ANALYSIS SUMMARY]")
+            print("[AI - VIDEO ANALYSIS SUMMARY]")
             print("="*70)
             print(summary)
             print("="*70 + "\n")
             
             return summary
         else:
-            print("[GEMINI ERROR] No response generated")
+            print("[AI ERROR] No response generated")
             return None
         
     except Exception as e:
-        print(f"[GEMINI ERROR] Video analysis failed: {e}")
+        print(f"[AI ERROR] Video analysis failed: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -568,32 +569,35 @@ def call_gemini_final_analysis(video_path, event_id):
     Uses base64 encoding for smaller videos or file upload for larger ones.
     """
     try:
-        print(f"\n[GEMINI] Preparing video analysis for event {event_id}...")
+        print(f"\n[AI] Preparing video analysis for event {event_id}...")
+        sys.stdout.flush()  # Force flush output
         
         # Check file size - DEFINE EARLY
         file_size = os.path.getsize(video_path)
         file_size_mb = file_size / (1024 * 1024)
-        print(f"[GEMINI] Video size: {file_size_mb:.2f} MB")
+        print(f"[AI] Video size: {file_size_mb:.2f} MB")
+        sys.stdout.flush()
         
         # Create prompt
         prompt = """Analyze this security camera video footage comprehensively.
 
-Provide:
-1. OVERVIEW: What happened in this event?
-2. TIMELINE: Chronological description of events
-3. PEOPLE: Who was involved? Count? Actions?
-4. OBJECTS: Significant objects or items?
-5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) with reasoning
-6. KEY OBSERVATIONS: Critical details for security personnel
-7. RECOMMENDATIONS: Required actions or follow-up?
+Provide a DETAILED report with:
+1. OVERVIEW: What happened in this event? (3-4 sentences minimum)
+2. TIMELINE: Chronological description of events with timestamps
+3. PEOPLE: Who was involved? Count? Detailed actions and behaviors
+4. OBJECTS: Significant objects or items visible in the footage
+5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) with detailed reasoning
+6. KEY OBSERVATIONS: 5-7 critical details for security personnel
+7. RECOMMENDATIONS: Specific required actions or follow-up procedures
 
-Be thorough and professional."""
+Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
         
         summary = None
         
         # Method 1: Try file upload for videos > 5MB
         if file_size_mb > 5:
-            print("[GEMINI] Using file upload method...")
+            print("[AI] Using file upload method...")
+            sys.stdout.flush()
             file_uri = upload_video_to_gemini_api(video_path)
             
             if file_uri:
@@ -616,12 +620,13 @@ Be thorough and professional."""
                     ],
                     "generationConfig": {
                         "temperature": 0.7,
-                        "maxOutputTokens": 2048
+                        "maxOutputTokens": 4096  # INCREASED from 2048 for longer responses
                     }
                 }
-                
-                print("[GEMINI] Requesting analysis from Gemini 2.0 Flash...")
-                response = requests.post(generation_url, json=payload, timeout=180)
+
+                print("[AI] Requesting comprehensive analysis...")
+                sys.stdout.flush()
+                response = requests.post(generation_url, json=payload, timeout=240)  # Increased timeout
                 response.raise_for_status()
                 result = response.json()
                 
@@ -630,7 +635,8 @@ Be thorough and professional."""
         
         # Method 2: Use base64 inline for smaller videos (< 20MB limit)
         if not summary and file_size_mb <= 20:
-            print("[GEMINI] Using base64 inline method...")
+            print("[AI] Using base64 inline method...")
+            sys.stdout.flush()
             
             video_base64 = encode_video_to_base64(video_path)
             
@@ -652,38 +658,53 @@ Be thorough and professional."""
                 ],
                 "generationConfig": {
                     "temperature": 0.7,
-                    "maxOutputTokens": 2048
+                    "maxOutputTokens": 4096  # INCREASED from 2048
                 }
             }
+
+            print("[AI] Sending video for comprehensive analysis...")
+            print("[AI] This may take 60-120 seconds for detailed analysis...")
+            sys.stdout.flush()
             
-            print("[GEMINI] Sending video for analysis (this may take 30-60 seconds)...")
-            response = requests.post(generation_url, json=payload, timeout=180)
+            response = requests.post(generation_url, json=payload, timeout=240)
             response.raise_for_status()
             result = response.json()
             
             if 'candidates' in result and len(result['candidates']) > 0:
                 summary = result['candidates'][0]['content']['parts'][0]['text']
         
-        # Display the complete summary
+        # Display the complete summary with proper flushing
         if summary:
             print("\n" + "="*70)
-            print("[GEMINI - FINAL VIDEO ANALYSIS]")
+            print("[AI - FINAL VIDEO ANALYSIS]")
             print("="*70)
-            print(summary)
-            print("="*70)
-            print("\n[GEMINI] Analysis complete - Full summary saved to database")
+            sys.stdout.flush()
+            
+            # Print in chunks to ensure complete output
+            chunk_size = 500
+            for i in range(0, len(summary), chunk_size):
+                print(summary[i:i+chunk_size], end='', flush=True)
+                time.sleep(0.01)  # Small delay to prevent buffer overflow
+            
+            print("\n" + "="*70)
+            print(f"\n[AI] Analysis complete - {len(summary)} characters")
+            print("[AI] Full summary saved to database")
+            sys.stdout.flush()
+            
             return summary
         
         # Error cases
         if file_size_mb > 20:
-            print(f"[GEMINI ERROR] Video too large ({file_size_mb:.2f} MB) - max 20MB")
+            print(f"[AI ERROR] Video too large ({file_size_mb:.2f} MB) - max 20MB")
         else:
-            print("[GEMINI ERROR] No response generated from API")
-        
+            print("[AI ERROR] No response generated from API")
+
+        sys.stdout.flush()
         return None
         
     except Exception as e:
-        print(f"[GEMINI ERROR] Video analysis failed: {e}")
+        print(f"[AI ERROR] Video analysis failed: {e}")
+        sys.stdout.flush()
         import traceback
         traceback.print_exc()
         return None

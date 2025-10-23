@@ -9,6 +9,7 @@ import config
 from cosmos_db import CosmosDBHelper
 from yolo_detector import YOLODetector
 from api_helper import call_live_commentator, call_gemini_final_analysis
+import sys
 
 # Initialize
 db = CosmosDBHelper()
@@ -64,6 +65,7 @@ def combine_all_event_videos(event_ids, output_path, fps=15):
 def worker_thread():
     """Thread 2: Worker/Detective - Handles all slow API operations."""
     print("[Worker Thread] Started\n")
+    sys.stdout.flush()
     
     while True:
         job = job_queue.get()
@@ -71,6 +73,8 @@ def worker_thread():
         # Check for sentinel (shutdown signal)
         if job is None:
             print("[Worker Thread] Received shutdown signal")
+            sys.stdout.flush()
+            time.sleep(1)  # Give time for any pending prints
             job_queue.task_done()
             break
         
@@ -97,6 +101,7 @@ def worker_thread():
                 event_id = job["event_id"]
                 video_path = job["video_file_path"]
                 print(f"[Worker] Event video saved: {event_id}")
+                sys.stdout.flush()
             
             elif job["job_type"] == "GEMINI_FINAL_ANALYSIS":
                 # This happens ONCE at the very end
@@ -104,33 +109,41 @@ def worker_thread():
                 
                 print("\n" + "="*70)
                 print("[GEMINI] Starting comprehensive analysis of ALL events")
-                print("[GEMINI] This may take 30-90 seconds for the AI to process")
+                print("[GEMINI] This may take 60-120 seconds for detailed analysis")
                 print("="*70)
+                sys.stdout.flush()
                 
                 # Call Gemini for comprehensive analysis
                 summary = call_gemini_final_analysis(master_video_path, "all_events")
                 
                 if summary:
-                    print(f"[Worker] Gemini analysis complete!")
+                    print(f"\n[Worker] Gemini analysis complete!")
                     print(f"[Worker] Summary length: {len(summary)} characters")
+                    print(f"[Worker] Word count: ~{len(summary.split())} words")
+                    sys.stdout.flush()
                     
                     # Save to a master document
                     master_event_id = "master_session_" + datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                     db.create_event(master_event_id, datetime.utcnow().isoformat() + "Z", master_video_path)
                     db.update_gemini_summary(master_event_id, summary, datetime.utcnow().isoformat() + "Z")
                     print(f"[Worker] Summary saved to database as event: {master_event_id}")
+                    sys.stdout.flush()
                 else:
                     print(f"[Worker] Gemini analysis failed - no summary generated")
+                    sys.stdout.flush()
                 
                 # Clean up master video
                 try:
                     os.remove(master_video_path)
                     print(f"[Worker] Cleaned up master video file")
+                    sys.stdout.flush()
                 except Exception as cleanup_error:
                     print(f"[Worker] Could not clean up video: {cleanup_error}")
+                    sys.stdout.flush()
         
         except Exception as e:
             print(f"[Worker ERROR] Job processing failed: {e}")
+            sys.stdout.flush()
             import traceback
             traceback.print_exc()
         
@@ -138,6 +151,7 @@ def worker_thread():
             job_queue.task_done()
     
     print("[Worker Thread] Stopped")
+    sys.stdout.flush()
 
 def main():
     """Thread 1: Main/Sentry - Video processing and YOLO detection."""
@@ -312,23 +326,28 @@ def main():
     
     print("\n" + "="*70)
     print("[System] Waiting for background analysis to complete...")
-    print("[System] Please be patient - Gemini may take 30-90 seconds")
+    print("[System] Please be patient - Gemini may take 60-120 seconds")
     print("="*70 + "\n")
+    sys.stdout.flush()
     
     # Signal worker to finish and wait
     job_queue.put(None)
     
     # Wait with timeout
     print("[System] Waiting for worker thread to finish...")
+    sys.stdout.flush()
     job_queue.join()
     
-    # Give extra time for any final prints to complete
-    time.sleep(2)
+    # Give extra time for final prints and flushes
+    print("[System] Ensuring all output is displayed...")
+    sys.stdout.flush()
+    time.sleep(3)  # Increased from 2 to 3 seconds
     
     print("\n" + "="*70)
     print("[System] All background tasks complete. Ready for Q&A.")
     print("="*70 + "\n")
-    
+    sys.stdout.flush()
+
     # Q&A Loop
     from qa_function import ask_question
     
