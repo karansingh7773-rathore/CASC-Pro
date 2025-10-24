@@ -108,8 +108,8 @@ def worker_thread():
                 master_video_path = job["master_video_path"]
                 
                 print("\n" + "="*70)
-                print("[GEMINI] Starting comprehensive analysis of ALL events")
-                print("[GEMINI] This may take 60-120 seconds for detailed analysis")
+                print("[AI] Starting comprehensive analysis of ALL events")
+                print("[AI] This may take 60-120 seconds for detailed analysis")
                 print("="*70)
                 sys.stdout.flush()
                 
@@ -117,7 +117,7 @@ def worker_thread():
                 summary = call_gemini_final_analysis(master_video_path, "all_events")
                 
                 if summary:
-                    print(f"\n[Worker] Gemini analysis complete!")
+                    print(f"\n[Worker] AI analysis complete!")
                     print(f"[Worker] Summary length: {len(summary)} characters")
                     print(f"[Worker] Word count: ~{len(summary.split())} words")
                     sys.stdout.flush()
@@ -129,7 +129,7 @@ def worker_thread():
                     print(f"[Worker] Summary saved to database as event: {master_event_id}")
                     sys.stdout.flush()
                 else:
-                    print(f"[Worker] Gemini analysis failed - no summary generated")
+                    print(f"[Worker] AI analysis failed - no summary generated")
                     sys.stdout.flush()
                 
                 # Clean up master video
@@ -161,7 +161,7 @@ def main():
     
     print("="*70)
     print("CASC PRO - Contextual Aware Security Cam")
-    print("YOLOv8n Detection | Context-Aware Live Commentary | Gemini Analysis")
+    print("YOLOv8n Detection | Context-Aware Live Commentary | AI Analysis")
     print("="*70 + "\n")
     
     # Initialize YOLO
@@ -274,7 +274,7 @@ def main():
             
             # Update event status in DB
             db.update_event_status(current_event_id, "Complete", datetime.utcnow().isoformat() + "Z")
-            print(f"[System] Event marked as complete (Gemini analysis will happen at video end)\n")
+            print(f"[System] Event marked as complete (AI analysis will happen at video end)\n")
             
             # Reset state
             current_event_id = None
@@ -304,16 +304,16 @@ def main():
     print(f"[System] Total frames processed: {frame_count}")
     print("="*70 + "\n")
     
-    # NOW: Combine all event videos and send to Gemini ONCE
+    # NOW: Combine all event videos and send to AI ONCE
     if all_events:
-        print("[System] Combining all event videos for Gemini analysis...")
+        print("[System] Combining all event videos for AI analysis...")
         master_video_path = os.path.join(config.TEMP_VIDEO_DIR, "master_session.mp4")
         
         if combine_all_event_videos(all_events, master_video_path, fps):
             print(f"[System] Master video created: {master_video_path}")
-            print("[System] Queuing for Gemini comprehensive analysis...\n")
+            print("[System] Queuing for AI comprehensive analysis...\n")
             
-            # Queue Gemini analysis
+            # Queue AI analysis
             job = {
                 "job_type": "GEMINI_FINAL_ANALYSIS",
                 "master_video_path": master_video_path
@@ -322,11 +322,11 @@ def main():
         else:
             print("[System] No valid event videos to analyze")
     else:
-        print("[System] No events captured - skipping Gemini analysis")
+        print("[System] No events captured - skipping AI analysis")
     
     print("\n" + "="*70)
     print("[System] Waiting for background analysis to complete...")
-    print("[System] Please be patient - Gemini may take 60-120 seconds")
+    print("[System] Please be patient - AI may take 60-120 seconds")
     print("="*70 + "\n")
     sys.stdout.flush()
     

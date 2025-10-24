@@ -6,8 +6,8 @@ from datetime import datetime
 import config
 import os
 import time
-import google.generativeai as genai
 import sys
+from openai import OpenAI
 
 def encode_frame_to_base64(frame):
     """Convert OpenCV frame to base64 string."""
@@ -255,17 +255,17 @@ def upload_video_to_gemini_api(video_path):
     """Upload video using Google AI File API (REST) - Simplified approach."""
     try:
         print(f"[AI] Uploading video file: {video_path}")
+        sys.stdout.flush()
         
-        # Check file size
         file_size = os.path.getsize(video_path)
         file_size_mb = file_size / (1024 * 1024)
         print(f"[AI] Video size: {file_size_mb:.2f} MB")
+        sys.stdout.flush()
         
         if file_size_mb > 100:
             print("[AI ERROR] Video file too large (max 100MB)")
             return None
         
-        # Use multipart upload (simpler method)
         url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={config.GOOGLE_API_KEY}"
         
         with open(video_path, 'rb') as video_file:
@@ -273,7 +273,6 @@ def upload_video_to_gemini_api(video_path):
                 'file': (os.path.basename(video_path), video_file, 'video/mp4')
             }
             
-            # Metadata as form data
             data = {
                 'file': json.dumps({
                     'display_name': os.path.basename(video_path)
@@ -296,14 +295,15 @@ def upload_video_to_gemini_api(video_path):
         file_name = file_info.get('name')
         
         if not file_uri:
-            print(f"[AI ERROR] No file URI in response: {result}")
+            print(f"[AI ERROR] No file URI in response")
             return None
-
+        
         print(f"[AI] Video uploaded successfully: {file_name}")
-
-        # Wait for processing
+        sys.stdout.flush()
+        
         print("[AI] Waiting for video processing...")
-        max_wait = 120  # Increased timeout for larger videos
+        sys.stdout.flush()
+        max_wait = 120
         start_time = time.time()
         
         while time.time() - start_time < max_wait:
@@ -315,114 +315,155 @@ def upload_video_to_gemini_api(video_path):
                 
                 if state == 'ACTIVE':
                     print("[AI] Video processing complete")
+                    sys.stdout.flush()
                     return file_uri
                 elif state == 'FAILED':
                     print("[AI ERROR] Video processing failed")
                     return None
-                elif state == 'PROCESSING':
-                    print("[AI] Still processing... (patience)")
-
+            
             time.sleep(3)
-
+        
         print("[AI ERROR] Video processing timeout")
         return None
         
     except Exception as e:
         print(f"[AI ERROR] Failed to upload video: {e}")
-        import traceback
-        traceback.print_exc()
+        sys.stdout.flush()
         return None
 
-
-def call_gemini_video_analysis(video_path, event_id):
+def call_gemini_final_analysis(video_path, event_id):
     """
-    Call Google AI Studio's Gemini 2.5 Flash to analyze the entire event video.
-    This IS saved to database as the official record.
-    
-    Args:
-        video_path: Path to the recorded event video
-        event_id: Event identifier
-    
-    Returns:
-        str: Comprehensive summary from Gemini
+    Call Gemini 2.0 Flash via REST API for comprehensive video analysis.
     """
-    
     try:
-        # Check if video file exists
-        if not os.path.exists(video_path):
-            print(f"[AI ERROR] Video file not found: {video_path}")
-            return None
+        print(f"\n[AI] Preparing video analysis for event {event_id}...")
+        sys.stdout.flush()
         
-        video_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-        print(f"\n[AI] Analyzing video: {os.path.basename(video_path)} ({video_size_mb:.2f} MB)")
+        file_size = os.path.getsize(video_path)
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"[AI] Video size: {file_size_mb:.2f} MB")
+        sys.stdout.flush()
+        
+        prompt = """Analyze this security camera video footage comprehensively.
 
-        # Upload video to Gemini
-        file_uri = upload_video_to_gemini(video_path)
-        
-        if not file_uri:
-            print("[AI ERROR] Failed to upload video")
-            return None
-        
-        # Prepare the generation request
-        prompt = """You are analyzing security camera footage. Provide a comprehensive, detailed summary of all significant actions, people, objects, and the overall narrative in this security camera video footage.
+Provide a DETAILED report with:
+1. OVERVIEW: What happened in this event? (3-4 sentences minimum)
+2. TIMELINE: Chronological description of events with timestamps
+3. PEOPLE: Who was involved? Count? Detailed actions and behaviors
+4. OBJECTS: Significant objects or items visible in the footage
+5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) with detailed reasoning
+6. KEY OBSERVATIONS: 5-7 critical details for security personnel
+7. RECOMMENDATIONS: Specific required actions or follow-up procedures
 
-Include:
-1. OVERVIEW: What happened overall in this event?
-2. TIMELINE: Describe the sequence of events from start to finish
-3. PEOPLE: Who was involved? How many people? What did they do?
-4. OBJECTS: Any significant objects or items visible?
-5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) and why
-6. KEY OBSERVATIONS: Critical details a security officer should know
-7. RECOMMENDATIONS: Should this require further review or action?
-
-Be thorough, detailed, and professional."""
+Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
         
-        generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={config.GOOGLE_API_KEY}"
+        summary = None
         
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
+        if file_size_mb > 5:
+            print("[AI] Using file upload method...")
+            sys.stdout.flush()
+            file_uri = upload_video_to_gemini_api(video_path)
+            
+            if file_uri:
+                generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
+                
+                payload = {
+                    "contents": [
                         {
-                            "file_data": {
-                                "mime_type": "video/mp4",
-                                "file_uri": file_uri
-                            }
+                            "parts": [
+                                {"text": prompt},
+                                {
+                                    "file_data": {
+                                        "mime_type": "video/mp4",
+                                        "file_uri": file_uri
+                                    }
+                                }
+                            ]
                         }
-                    ]
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "maxOutputTokens": 4096
+                    }
                 }
-            ],
-            "generationConfig": {
-                "temperature": 0.7,
-                "maxOutputTokens": 2048
+                
+                print("[AI] Requesting comprehensive analysis...")
+                sys.stdout.flush()
+                response = requests.post(generation_url, json=payload, timeout=240)
+                response.raise_for_status()
+                result = response.json()
+                
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    summary = result['candidates'][0]['content']['parts'][0]['text']
+        
+        if not summary and file_size_mb <= 20:
+            print("[AI] Using base64 inline method...")
+            sys.stdout.flush()
+            
+            video_base64 = encode_video_to_base64(video_path)
+            
+            generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
+            
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": "video/mp4",
+                                    "data": video_base64
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "maxOutputTokens": 4096
+                }
             }
-        }
-
-        print("[AI] Generating comprehensive video analysis...")
-        print("="*70)
+            
+            print("[AI] Sending video for comprehensive analysis...")
+            print("[AI] This may take 60-120 seconds for detailed analysis...")
+            sys.stdout.flush()
+            
+            response = requests.post(generation_url, json=payload, timeout=240)
+            response.raise_for_status()
+            result = response.json()
+            
+            if 'candidates' in result and len(result['candidates']) > 0:
+                summary = result['candidates'][0]['content']['parts'][0]['text']
         
-        response = requests.post(generation_url, json=payload, timeout=120)
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract the summary
-        if 'candidates' in result and len(result['candidates']) > 0:
-            summary = result['candidates'][0]['content']['parts'][0]['text']
+        if summary:
+            print("\n" + "="*70)
+            print("[AI - FINAL VIDEO ANALYSIS]")
+            print("="*70)
+            sys.stdout.flush()
+            
+            chunk_size = 500
+            for i in range(0, len(summary), chunk_size):
+                print(summary[i:i+chunk_size], end='', flush=True)
+                time.sleep(0.01)
             
             print("\n" + "="*70)
-            print("[AI - VIDEO ANALYSIS SUMMARY]")
-            print("="*70)
-            print(summary)
-            print("="*70 + "\n")
+            print(f"\n[AI] Analysis complete - {len(summary)} characters")
+            print("[AI] Full summary saved to database")
+            sys.stdout.flush()
             
             return summary
+        
+        if file_size_mb > 20:
+            print(f"[AI ERROR] Video too large ({file_size_mb:.2f} MB) - max 20MB")
         else:
-            print("[AI ERROR] No response generated")
-            return None
+            print("[AI ERROR] No response generated from API")
+        
+        sys.stdout.flush()
+        return None
         
     except Exception as e:
         print(f"[AI ERROR] Video analysis failed: {e}")
+        sys.stdout.flush()
         import traceback
         traceback.print_exc()
         return None
@@ -431,25 +472,93 @@ Be thorough, detailed, and professional."""
 # Q&A: Using Free Open Router Model (reads Gemini 2.5's saved summary)
 # ============================================================================
 
-def call_qna_model(event_summary, question):
+def call_qa_model(event_summary, question):
     """
-    Call free Open Router model for Q&A based on Gemini 2.5's saved video summary.
+    Call NVIDIA Nemotron model for Q&A based on Gemini summary.
+    Uses OpenAI-compatible API from NVIDIA.
     
     Args:
-        event_summary: The comprehensive summary from Gemini 2.5 video analysis
+        event_summary: Gemini's comprehensive summary
         question: User's question
     
     Returns:
-        str: Answer from the Q&A model
+        str: Answer from NVIDIA Nemotron
     """
-    prompt = f"""You are answering questions about a security camera event based on the analysis summary below.
+    try:
+        # Initialize NVIDIA client
+        client = OpenAI(
+            base_url=config.NVIDIA_API_URL,
+            api_key=config.NVIDIA_API_KEY
+        )
+        
+        # Construct the system prompt with event context
+        system_prompt = f"""You are a professional security analyst AI assistant. 
+You have access to a comprehensive security event analysis and must answer questions based ONLY on this information.
 
-SECURITY EVENT SUMMARY (from Gemini 2.5 Flash):
+SECURITY EVENT ANALYSIS:
+{event_summary}
+
+Instructions:
+- Answer questions accurately based only on the information provided
+- If information is not in the analysis, clearly state that
+- Be concise but thorough
+- Use professional security terminology
+- Provide specific details from the analysis when relevant"""
+        
+        print(f"\n[NVIDIA Q&A] Processing question with Nemotron...")
+        print(f"[NVIDIA Q&A] Question: {question}")
+        sys.stdout.flush()
+        
+        # Create chat completion with streaming
+        completion = client.chat.completions.create(
+            model=config.QNA_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.6,
+            top_p=0.95,
+            max_tokens=2048,  # Reasonable limit for Q&A
+            frequency_penalty=0,
+            presence_penalty=0,
+            stream=True
+        )
+        
+        # Collect streaming response
+        print("[NVIDIA Q&A] Response: ", end="", flush=True)
+        full_response = ""
+        
+        for chunk in completion:
+            if chunk.choices[0].delta.content is not None:
+                content = chunk.choices[0].delta.content
+                print(content, end="", flush=True)
+                full_response += content
+        
+        print("\n")  # New line after response
+        sys.stdout.flush()
+        
+        return full_response.strip()
+        
+    except Exception as e:
+        print(f"\n[NVIDIA Q&A ERROR] Failed: {e}")
+        sys.stdout.flush()
+        
+        # Fallback to Open Router if NVIDIA fails
+        print("[Q&A] Attempting fallback to Open Router...")
+        return call_qa_model_fallback(event_summary, question)
+
+def call_qa_model_fallback(event_summary, question):
+    """
+    Fallback Q&A function using Open Router if NVIDIA fails.
+    """
+    prompt = f"""You are analyzing a security event based on the comprehensive analysis below.
+
+EVENT ANALYSIS:
 {event_summary}
 
 USER QUESTION: {question}
 
-Provide a clear, accurate answer based ONLY on the information in the summary above. If the information is not in the summary, say so."""
+Provide a clear, accurate answer based ONLY on the analysis above."""
     
     headers = {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
@@ -457,39 +566,30 @@ Provide a clear, accurate answer based ONLY on the information in the summary ab
     }
     
     payload = {
-        "model": config.QNA_MODEL,
+        "model": "mistralai/mistral-7b-instruct:free",
         "messages": [
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 500
+        "max_tokens": 300
     }
     
     try:
-        response = requests.post(config.OPENROUTER_API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(config.OPENROUTER_API_URL, headers=headers, json=payload, timeout=20)
         response.raise_for_status()
         result = response.json()
-        answer = result['choices'][0]['message']['content'].strip()
-        return answer
+        return result['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"[Q&A ERROR] Failed: {e}")
-        return None
+        print(f"[Q&A FALLBACK ERROR] {e}")
+        return "Unable to answer at this time. Please check your API configuration."
 
 # =========================================================================
-# LIVE COMMENTATOR: Context-Aware Live Updates
+# LIVE COMMENTATOR: Context-Aware Live Updates (NVIDIA Vision Model)
 # ============================================================================
 
 def call_live_commentator(frame_before, frame_now, previous_commentary=None):
     """
-    Call Open Router image model for context-aware live commentary.
-    
-    Args:
-        frame_before: Previous frame
-        frame_now: Current frame
-        previous_commentary: Previous commentary from DB (for context)
-    
-    Returns:
-        str: Current analysis/commentary
+    Call NVIDIA Llama 3.2 Vision model for context-aware live commentary with streaming.
     """
     base64_before = encode_frame_to_base64(frame_before)
     base64_now = encode_frame_to_base64(frame_now)
@@ -519,239 +619,81 @@ Provide:
 - Current Posture/Emotion:
 - Current Threat Level (1-10):"""
     
+    # Prepare message content with images
+    content = [
+        {"type": "text", "text": prompt},
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{base64_before}"}
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{base64_now}"}
+        }
+    ]
+    
     headers = {
-        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+        "Accept": "text/event-stream"  # Enable streaming
     }
     
     payload = {
         "model": config.LIVE_COMMENTATOR_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_before}"}},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_now}"}}
-                ]
-            }
-        ],
-        "temperature": 0.7,
-        "max_tokens": 300
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": 512,
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stream": True
     }
     
     try:
         print("\n" + "="*70)
-        print("[LIVE COMMENTATOR - CONTEXT-AWARE UPDATE]")
+        print("[NVIDIA LIVE COMMENTATOR - STREAMING UPDATE]")
         print("="*70)
+        sys.stdout.flush()
         
-        response = requests.post(config.OPENROUTER_API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(config.NVIDIA_VISION_URL, headers=headers, json=payload, stream=True, timeout=30)
         response.raise_for_status()
-        result = response.json()
         
-        commentary = result['choices'][0]['message']['content'].strip()
-        print(commentary)
-        print("="*70 + "\n")
+        full_commentary = ""
         
-        return commentary
+        # Process streaming response
+        for line in response.iter_lines():
+            if line:
+                line_text = line.decode("utf-8")
+                
+                # Skip empty lines and "data: " prefix
+                if line_text.startswith("data: "):
+                    line_text = line_text[6:]  # Remove "data: " prefix
+                
+                # Skip [DONE] signal
+                if line_text.strip() == "[DONE]":
+                    break
+                
+                try:
+                    # Parse JSON chunk
+                    chunk_data = json.loads(line_text)
+                    
+                    # Extract content from chunk
+                    if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                        delta = chunk_data["choices"][0].get("delta", {})
+                        content_chunk = delta.get("content", "")
+                        
+                        if content_chunk:
+                            print(content_chunk, end="", flush=True)
+                            full_commentary += content_chunk
+                
+                except json.JSONDecodeError:
+                    continue  # Skip malformed JSON
+        
+        print("\n" + "="*70 + "\n")
+        sys.stdout.flush()
+        
+        return full_commentary.strip() if full_commentary else "Analysis in progress..."
         
     except Exception as e:
-        print(f"[LIVE COMMENTATOR ERROR] {e}\n")
+        print(f"[NVIDIA COMMENTATOR ERROR] {e}\n")
+        sys.stdout.flush()
         return f"Motion detected at {datetime.now().strftime('%H:%M:%S')} - Analysis unavailable"
-
-# =========================================================================
-# GEMINI: Post-Event Video Analysis
-# ============================================================================
-
-def call_gemini_final_analysis(video_path, event_id):
-    """
-    Call Gemini 2.0 Flash via REST API for comprehensive video analysis.
-    Uses base64 encoding for smaller videos or file upload for larger ones.
-    """
-    try:
-        print(f"\n[AI] Preparing video analysis for event {event_id}...")
-        sys.stdout.flush()  # Force flush output
-        
-        # Check file size - DEFINE EARLY
-        file_size = os.path.getsize(video_path)
-        file_size_mb = file_size / (1024 * 1024)
-        print(f"[AI] Video size: {file_size_mb:.2f} MB")
-        sys.stdout.flush()
-        
-        # Create prompt
-        prompt = """Analyze this security camera video footage comprehensively.
-
-Provide a DETAILED report with:
-1. OVERVIEW: What happened in this event? (3-4 sentences minimum)
-2. TIMELINE: Chronological description of events with timestamps
-3. PEOPLE: Who was involved? Count? Detailed actions and behaviors
-4. OBJECTS: Significant objects or items visible in the footage
-5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) with detailed reasoning
-6. KEY OBSERVATIONS: 5-7 critical details for security personnel
-7. RECOMMENDATIONS: Specific required actions or follow-up procedures
-
-Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
-        
-        summary = None
-        
-        # Method 1: Try file upload for videos > 5MB
-        if file_size_mb > 5:
-            print("[AI] Using file upload method...")
-            sys.stdout.flush()
-            file_uri = upload_video_to_gemini_api(video_path)
-            
-            if file_uri:
-                # Generate content with file URI
-                generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
-                
-                payload = {
-                    "contents": [
-                        {
-                            "parts": [
-                                {"text": prompt},
-                                {
-                                    "file_data": {
-                                        "mime_type": "video/mp4",
-                                        "file_uri": file_uri
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.7,
-                        "maxOutputTokens": 4096  # INCREASED from 2048 for longer responses
-                    }
-                }
-
-                print("[AI] Requesting comprehensive analysis...")
-                sys.stdout.flush()
-                response = requests.post(generation_url, json=payload, timeout=240)  # Increased timeout
-                response.raise_for_status()
-                result = response.json()
-                
-                if 'candidates' in result and len(result['candidates']) > 0:
-                    summary = result['candidates'][0]['content']['parts'][0]['text']
-        
-        # Method 2: Use base64 inline for smaller videos (< 20MB limit)
-        if not summary and file_size_mb <= 20:
-            print("[AI] Using base64 inline method...")
-            sys.stdout.flush()
-            
-            video_base64 = encode_video_to_base64(video_path)
-            
-            generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
-            
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt},
-                            {
-                                "inline_data": {
-                                    "mime_type": "video/mp4",
-                                    "data": video_base64
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "maxOutputTokens": 4096  # INCREASED from 2048
-                }
-            }
-
-            print("[AI] Sending video for comprehensive analysis...")
-            print("[AI] This may take 60-120 seconds for detailed analysis...")
-            sys.stdout.flush()
-            
-            response = requests.post(generation_url, json=payload, timeout=240)
-            response.raise_for_status()
-            result = response.json()
-            
-            if 'candidates' in result and len(result['candidates']) > 0:
-                summary = result['candidates'][0]['content']['parts'][0]['text']
-        
-        # Display the complete summary with proper flushing
-        if summary:
-            print("\n" + "="*70)
-            print("[AI - FINAL VIDEO ANALYSIS]")
-            print("="*70)
-            sys.stdout.flush()
-            
-            # Print in chunks to ensure complete output
-            chunk_size = 500
-            for i in range(0, len(summary), chunk_size):
-                print(summary[i:i+chunk_size], end='', flush=True)
-                time.sleep(0.01)  # Small delay to prevent buffer overflow
-            
-            print("\n" + "="*70)
-            print(f"\n[AI] Analysis complete - {len(summary)} characters")
-            print("[AI] Full summary saved to database")
-            sys.stdout.flush()
-            
-            return summary
-        
-        # Error cases
-        if file_size_mb > 20:
-            print(f"[AI ERROR] Video too large ({file_size_mb:.2f} MB) - max 20MB")
-        else:
-            print("[AI ERROR] No response generated from API")
-
-        sys.stdout.flush()
-        return None
-        
-    except Exception as e:
-        print(f"[AI ERROR] Video analysis failed: {e}")
-        sys.stdout.flush()
-        import traceback
-        traceback.print_exc()
-        return None
-
-# ============================================================================
-# Q&A: Post-Event Question Answering
-# ============================================================================
-
-def call_qa_model(event_summary, question):
-    """
-    Call Open Router text model for Q&A based on Gemini summary.
-    
-    Args:
-        event_summary: Gemini's comprehensive summary
-        question: User's question
-    
-    Returns:
-        str: Answer
-    """
-    prompt = f"""You are analyzing a security event based on the comprehensive analysis below.
-
-EVENT ANALYSIS:
-{event_summary}
-
-USER QUESTION: {question}
-
-Provide a clear, accurate answer based ONLY on the analysis above."""
-    
-    headers = {
-        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": config.QNA_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 300
-    }
-    
-    try:
-        response = requests.post(config.OPENROUTER_API_URL, headers=headers, json=payload, timeout=20)
-        response.raise_for_status()
-        result = response.json()
-        return result['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        print(f"[Q&A ERROR] {e}")
-        return "Unable to answer at this time."

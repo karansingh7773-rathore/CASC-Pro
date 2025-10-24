@@ -16,9 +16,14 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Google AI Studio Configuration (for Gemini 2.0 Flash)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "your_google_ai_studio_api_key_here")
 
+# NVIDIA API Configuration (for Q&A)
+# Get your key from: https://build.nvidia.com/
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "nvapi-your_nvidia_api_key_here")
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1"
+
 # Model Configuration - CASC Pro
 LIVE_COMMENTATOR_MODEL = "nousresearch/nous-hermes-2-vision-7b:free"
-QNA_MODEL = "mistralai/mistral-7b-instruct:free"
+QNA_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1.5"  # NVIDIA Nemotron for Q&A
 GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 # ============================================================================
