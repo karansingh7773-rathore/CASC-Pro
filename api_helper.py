@@ -7,6 +7,7 @@ import config
 import os
 import time
 import sys
+import threading  # ADD THIS - was missing at top level
 from openai import OpenAI
 
 def encode_frame_to_base64(frame):
@@ -334,6 +335,7 @@ def upload_video_to_gemini_api(video_path):
 def call_gemini_final_analysis(video_path, event_id):
     """
     Call Gemini 2.0 Flash via REST API for comprehensive video analysis.
+    Simulates streaming with progress indicators and chunked display.
     """
     try:
         print(f"\n[AI] Preparing video analysis for event {event_id}...")
@@ -388,8 +390,31 @@ Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
                 }
                 
                 print("[AI] Requesting comprehensive analysis...")
+                print("[AI] AI is analyzing video frames... (this may take 30-90 seconds)")
                 sys.stdout.flush()
+                
+                # Show progress animation while waiting
+                stop_animation = threading.Event()
+                
+                def progress_animation():
+                    """Display animated progress indicator."""
+                    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                    idx = 0
+                    while not stop_animation.is_set():
+                        print(f"\r[AI] Processing {frames[idx % len(frames)]}", end="", flush=True)
+                        time.sleep(0.1)
+                        idx += 1
+                    print("\r[AI] Processing ✓ Complete!     ", flush=True)
+                
+                animation_thread = threading.Thread(target=progress_animation, daemon=True)
+                animation_thread.start()
+                
                 response = requests.post(generation_url, json=payload, timeout=240)
+                
+                # Stop animation
+                stop_animation.set()
+                animation_thread.join(timeout=1)
+                
                 response.raise_for_status()
                 result = response.json()
                 
@@ -425,29 +450,64 @@ Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
             }
             
             print("[AI] Sending video for comprehensive analysis...")
-            print("[AI] This may take 60-120 seconds for detailed analysis...")
+            print("[AI] AI is analyzing video frames... (this may take 30-90 seconds)")
             sys.stdout.flush()
             
+            # Show progress animation while waiting
+            stop_animation = threading.Event()
+            
+            def progress_animation():
+                """Display animated progress indicator."""
+                frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                idx = 0
+                while not stop_animation.is_set():
+                    print(f"\r[AI] Processing {frames[idx % len(frames)]}", end="", flush=True)
+                    time.sleep(0.1)
+                    idx += 1
+                print("\r[AI] Processing ✓ Complete!     ", flush=True)
+            
+            animation_thread = threading.Thread(target=progress_animation, daemon=True)
+            animation_thread.start()
+            
             response = requests.post(generation_url, json=payload, timeout=240)
+            
+            # Stop animation
+            stop_animation.set()
+            animation_thread.join(timeout=1)
+            
             response.raise_for_status()
             result = response.json()
             
             if 'candidates' in result and len(result['candidates']) > 0:
                 summary = result['candidates'][0]['content']['parts'][0]['text']
         
+        # Display with streaming-like chunked output
         if summary:
-            print("\n" + "="*70)
+            print("\n" + "="*50)
             print("[AI - FINAL VIDEO ANALYSIS]")
-            print("="*70)
+            print("="*50)
             sys.stdout.flush()
             
-            chunk_size = 500
-            for i in range(0, len(summary), chunk_size):
-                print(summary[i:i+chunk_size], end='', flush=True)
-                time.sleep(0.01)
+            # Simulate streaming by displaying in word chunks
+            words = summary.split()
+            line_buffer = []
+            max_line_length = 80
             
-            print("\n" + "="*70)
-            print(f"\n[AI] Analysis complete - {len(summary)} characters")
+            for word in words:
+                line_buffer.append(word)
+                current_line = " ".join(line_buffer)
+                
+                if len(current_line) > max_line_length or word.endswith(('.', '!', '?', ':')):
+                    print(" ".join(line_buffer), flush=True)
+                    time.sleep(0.02)
+                    line_buffer = []
+            
+            # Print remaining words
+            if line_buffer:
+                print(" ".join(line_buffer), flush=True)
+            
+            print("\n" + "="*50)
+            print(f"\n[AI] Analysis complete - {len(summary)} characters (~{len(words)} words)")
             print("[AI] Full summary saved to database")
             sys.stdout.flush()
             
@@ -697,3 +757,329 @@ Provide:
         print(f"[NVIDIA COMMENTATOR ERROR] {e}\n")
         sys.stdout.flush()
         return f"Motion detected at {datetime.now().strftime('%H:%M:%S')} - Analysis unavailable"
+
+def call_live_commentator(frames, event_id, frame_count, event_duration, previous_commentary=None):
+    """
+    Call NVIDIA Llama 3.2 Vision model for context-aware live commentary using sliding window.
+    
+    Args:
+        frames: List of frames (up to 10) showing progression
+        event_id: Event identifier
+        frame_count: Number of frames in the sequence
+        event_duration: How long the event has been occurring
+        previous_commentary: Previous commentary for context
+    """
+    # Encode all frames to base64
+    encoded_frames = [encode_frame_to_base64(frame) for frame in frames]
+    
+    # Build context-aware prompt for sliding window
+    if previous_commentary:
+        prompt = f"""You are a live security camera AI analyzing an ongoing event (ID: {event_id}).
+
+EVENT CONTEXT:
+- Event Duration: {event_duration:.1f} seconds
+- Frames in sequence: {frame_count} (oldest to newest)
+
+PREVIOUS ANALYSIS:
+{previous_commentary}
+
+TASK: Analyze this sequence of {frame_count} frames showing the event progression.
+
+Frame 1 (oldest) → Frame {frame_count} (most recent)
+
+Provide:
+1. PROGRESSION: How did the situation evolve across these frames?
+2. PEOPLE TRACKING: Track individuals - entries, exits, movements, interactions
+3. BEHAVIOR CHANGE: Any escalation or de-escalation in behavior?
+4. CURRENT STATUS: What is happening RIGHT NOW (latest frames)?
+5. THREAT TRAJECTORY: Is threat increasing, stable, or decreasing?
+6. CURRENT THREAT LEVEL (1-10): Based on latest frames
+
+Be concise but comprehensive. Focus on CHANGES and PROGRESSION."""
+    else:
+        prompt = f"""You are a live security camera AI analyzing event {event_id}.
+
+Analyze this sequence of {frame_count} security camera frames (oldest to newest).
+
+Frame 1 (start) → Frame {frame_count} (current)
+
+Provide:
+1. INITIAL OBSERVATION: What happened at the start?
+2. PROGRESSION: How did things develop across frames?
+3. PEOPLE: Count and describe individuals across the sequence
+4. ACTIONS: Key actions observed in the progression
+5. CURRENT STATUS: What is happening NOW (latest frames)?
+6. THREAT LEVEL (1-10): Current threat assessment
+
+Be detailed and track changes across the frame sequence."""
+    
+    # Prepare message content with all frames
+    content = [{"type": "text", "text": prompt}]
+    
+    # Add all frames to content
+    for i, encoded_frame in enumerate(encoded_frames, 1):
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{encoded_frame}",
+                "detail": "low" if frame_count > 5 else "high"  # Use low detail for many frames
+            }
+        })
+    
+    headers = {
+        "Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+        "Accept": "text/event-stream"
+    }
+    
+    payload = {
+        "model": config.LIVE_COMMENTATOR_MODEL,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": 1024,  # Increased for detailed analysis
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stream": True
+    }
+    
+    try:
+        print("\n" + "="*50)
+        print(f"[NVIDIA SLIDING WINDOW - {frame_count} FRAMES]")
+        print("="*50)
+        sys.stdout.flush()
+        
+        response = requests.post(config.NVIDIA_VISION_URL, headers=headers, json=payload, stream=True, timeout=45)
+        response.raise_for_status()
+        
+        full_commentary = ""
+        
+        # Process streaming response
+        for line in response.iter_lines():
+            if line:
+                line_text = line.decode("utf-8")
+                
+                if line_text.startswith("data: "):
+                    line_text = line_text[6:]
+                
+                if line_text.strip() == "[DONE]":
+                    break
+                
+                try:
+                    chunk_data = json.loads(line_text)
+                    
+                    if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                        delta = chunk_data["choices"][0].get("delta", {})
+                        content_chunk = delta.get("content", "")
+                        
+                        if content_chunk:
+                            print(content_chunk, end="", flush=True)
+                            full_commentary += content_chunk
+                
+                except json.JSONDecodeError:
+                    continue
+        
+        print("\n" + "="*50 + "\n")
+        sys.stdout.flush()
+        
+        return full_commentary.strip() if full_commentary else "Analysis in progress..."
+        
+    except Exception as e:
+        print(f"[NVIDIA COMMENTATOR ERROR] {e}\n")
+        sys.stdout.flush()
+        return f"Motion detected at {datetime.now().strftime('%H:%M:%S')} - Analysis unavailable"
+
+def call_gemini_final_analysis(video_path, event_id):
+    """
+    Call Gemini 2.0 Flash via REST API for comprehensive video analysis.
+    Simulates streaming with progress indicators and chunked display.
+    """
+    try:
+        print(f"\n[AI] Preparing video analysis for event {event_id}...")
+        sys.stdout.flush()
+        
+        file_size = os.path.getsize(video_path)
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"[AI] Video size: {file_size_mb:.2f} MB")
+        sys.stdout.flush()
+        
+        prompt = """Analyze this security camera video footage comprehensively.
+
+Provide a DETAILED report with:
+1. OVERVIEW: What happened in this event? (3-4 sentences minimum)
+2. TIMELINE: Chronological description of events with timestamps
+3. PEOPLE: Who was involved? Count? Detailed actions and behaviors
+4. OBJECTS: Significant objects or items visible in the footage
+5. THREAT ASSESSMENT: Overall security evaluation (Low/Medium/High) with detailed reasoning
+6. KEY OBSERVATIONS: 5-7 critical details for security personnel
+7. RECOMMENDATIONS: Specific required actions or follow-up procedures
+
+Be thorough, detailed, and professional. Provide AT LEAST 500 words."""
+        
+        summary = None
+        
+        if file_size_mb > 5:
+            print("[AI] Using file upload method...")
+            sys.stdout.flush()
+            file_uri = upload_video_to_gemini_api(video_path)
+            
+            if file_uri:
+                generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
+                
+                payload = {
+                    "contents": [
+                        {
+                            "parts": [
+                                {"text": prompt},
+                                {
+                                    "file_data": {
+                                        "mime_type": "video/mp4",
+                                        "file_uri": file_uri
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "maxOutputTokens": 4096
+                    }
+                }
+                
+                print("[AI] Requesting comprehensive analysis...")
+                print("[AI] AI is analyzing video frames... (this may take 30-90 seconds)")
+                sys.stdout.flush()
+                
+                # Show progress animation while waiting
+                stop_animation = threading.Event()
+                
+                def progress_animation():
+                    """Display animated progress indicator."""
+                    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                    idx = 0
+                    while not stop_animation.is_set():
+                        print(f"\r[AI] Processing {frames[idx % len(frames)]}", end="", flush=True)
+                        time.sleep(0.1)
+                        idx += 1
+                    print("\r[AI] Processing ✓ Complete!     ", flush=True)
+                
+                animation_thread = threading.Thread(target=progress_animation, daemon=True)
+                animation_thread.start()
+                
+                response = requests.post(generation_url, json=payload, timeout=240)
+                
+                # Stop animation
+                stop_animation.set()
+                animation_thread.join(timeout=1)
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    summary = result['candidates'][0]['content']['parts'][0]['text']
+        
+        if not summary and file_size_mb <= 20:
+            print("[AI] Using base64 inline method...")
+            sys.stdout.flush()
+            
+            video_base64 = encode_video_to_base64(video_path)
+            
+            generation_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GOOGLE_API_KEY}"
+            
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": "video/mp4",
+                                    "data": video_base64
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "maxOutputTokens": 4096
+                }
+            }
+            
+            print("[AI] Sending video for comprehensive analysis...")
+            print("[AI] AI is analyzing video frames... (this may take 30-90 seconds)")
+            sys.stdout.flush()
+            
+            # Show progress animation while waiting
+            stop_animation = threading.Event()
+            
+            def progress_animation():
+                """Display animated progress indicator."""
+                frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                idx = 0
+                while not stop_animation.is_set():
+                    print(f"\r[AI] Processing {frames[idx % len(frames)]}", end="", flush=True)
+                    time.sleep(0.1)
+                    idx += 1
+                print("\r[AI] Processing ✓ Complete!     ", flush=True)
+            
+            animation_thread = threading.Thread(target=progress_animation, daemon=True)
+            animation_thread.start()
+            
+            response = requests.post(generation_url, json=payload, timeout=240)
+            
+            # Stop animation
+            stop_animation.set()
+            animation_thread.join(timeout=1)
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if 'candidates' in result and len(result['candidates']) > 0:
+                summary = result['candidates'][0]['content']['parts'][0]['text']
+        
+        # Display with streaming-like chunked output
+        if summary:
+            print("\n" + "="*50)
+            print("[AI - FINAL VIDEO ANALYSIS]")
+            print("="*50)
+            sys.stdout.flush()
+            
+            # Simulate streaming by displaying in word chunks
+            words = summary.split()
+            line_buffer = []
+            max_line_length = 80
+            
+            for word in words:
+                line_buffer.append(word)
+                current_line = " ".join(line_buffer)
+                
+                if len(current_line) > max_line_length or word.endswith(('.', '!', '?', ':')):
+                    print(" ".join(line_buffer), flush=True)
+                    time.sleep(0.02)
+                    line_buffer = []
+            
+            # Print remaining words
+            if line_buffer:
+                print(" ".join(line_buffer), flush=True)
+            
+            print("\n" + "="*50)
+            print(f"\n[AI] Analysis complete - {len(summary)} characters (~{len(words)} words)")
+            print("[AI] Full summary saved to database")
+            sys.stdout.flush()
+            
+            return summary
+        
+        if file_size_mb > 20:
+            print(f"[AI ERROR] Video too large ({file_size_mb:.2f} MB) - max 20MB")
+        else:
+            print("[AI ERROR] No response generated from API")
+        
+        sys.stdout.flush()
+        return None
+        
+    except Exception as e:
+        print(f"[AI ERROR] Video analysis failed: {e}")
+        sys.stdout.flush()
+        import traceback
+        traceback.print_exc()
+        return None

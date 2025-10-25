@@ -24,6 +24,10 @@ frame_event_start = None
 frame_previous_live = None
 motion_segment_frames = []
 
+# NEW: Sliding window for live commentary
+frame_window = []  # Stores last 10 frames for sliding window analysis
+last_frame_sample_time = 0  # When we last added a frame to window
+
 # NEW: Track all events for final Gemini analysis
 all_events = []  # List of all event IDs processed
 
@@ -81,15 +85,20 @@ def worker_thread():
         try:
             if job["job_type"] == "LIVE_COMMENTARY":
                 event_id = job["event_id"]
+                frames = job["frames"]
+                frame_count = job["frame_count"]
+                event_duration = job["event_duration"]
                 
                 # Get previous commentary from DB for context
                 event_doc = db.get_event(event_id)
                 previous_commentary = event_doc.get("LastLiveCommentary") if event_doc else None
                 
-                # Call live commentator with context
+                # Call live commentator with sliding window of frames
                 current_analysis = call_live_commentator(
-                    job["frame_before"],
-                    job["frame_now"],
+                    frames,
+                    event_id,
+                    frame_count,
+                    event_duration,
                     previous_commentary
                 )
                 
@@ -158,11 +167,12 @@ def main():
     global motion_detected, current_event_id, event_start_time
     global last_live_call_time, frame_event_start, frame_previous_live
     global motion_segment_frames, all_events
+    global frame_window, last_frame_sample_time
     
-    print("="*70)
+    print("="*50)
     print("CASC PRO - Contextual Aware Security Cam")
-    print("YOLOv8n Detection | Context-Aware Live Commentary | AI Analysis")
-    print("="*70 + "\n")
+    print("YOLOv8n Detection | Live Commentary | AI Analysis")
+    print("="*50 + "\n")
     
     # Initialize YOLO
     detector = YOLODetector()
@@ -182,7 +192,7 @@ def main():
     
     print(f"[System] Video FPS: {fps}")
     print(f"[System] Press 'q' to quit\n")
-    print("="*70 + "\n")
+    print("="*50 + "\n")
     
     frame_count = 0
     event_count = 0  # Track total number of events
@@ -207,10 +217,10 @@ def main():
         
         # State 2: Motion Started
         if has_person and not motion_detected:
-            event_count += 1  # Increment event counter
-            print(f"\n{'='*70}")
+            event_count += 1
+            print(f"\n{'='*50}")
             print(f"[ALERT] PERSON DETECTED - Event #{event_count} Started (Count: {person_count})")
-            print(f"{'='*70}")
+            print(f"{'='*50}")
             
             motion_detected = True
             event_start_time = current_time
@@ -220,6 +230,10 @@ def main():
             current_event_id = f"evt_{uuid.uuid4()}"
             motion_segment_frames = [frame.copy()]
             
+            # Initialize sliding window with first frame
+            frame_window = [frame.copy()]
+            last_frame_sample_time = current_time
+            
             # Create event in DB
             start_time_iso = datetime.utcnow().isoformat() + "Z"
             db.create_event(current_event_id, start_time_iso)
@@ -227,19 +241,32 @@ def main():
         
         # State 3: Motion In Progress
         elif has_person and motion_detected:
-            # Collect frames
+            # Collect frames for video recording
             motion_segment_frames.append(frame.copy())
             
-            # Check if it's time for live commentary
+            # NEW: Sample frames for sliding window at configured interval
+            if (current_time - last_frame_sample_time) >= config.FRAME_SAMPLING_INTERVAL:
+                frame_window.append(frame.copy())
+                last_frame_sample_time = current_time
+                
+                # Keep only last MAX_FRAME_WINDOW frames (sliding window)
+                if len(frame_window) > config.MAX_FRAME_WINDOW:
+                    frame_window.pop(0)  # Remove oldest frame
+            
+            # Check if it's time for live commentary with sliding window
             if (current_time - last_live_call_time) >= config.THROTTLE_SECONDS:
                 elapsed = current_time - event_start_time
-                print(f"[Live Commentary] Requesting update (elapsed: {elapsed:.1f}s)...")
+                frame_count_in_window = len(frame_window)
+                
+                print(f"\n[Live Commentary] Requesting sliding window analysis")
+                print(f"[Live Commentary] Elapsed: {elapsed:.1f}s | Frames in window: {frame_count_in_window}")
                 
                 job = {
                     "job_type": "LIVE_COMMENTARY",
                     "event_id": current_event_id,
-                    "frame_before": frame_previous_live.copy(),
-                    "frame_now": frame.copy()
+                    "frames": frame_window.copy(),  # Send all frames in window
+                    "frame_count": frame_count_in_window,
+                    "event_duration": elapsed
                 }
                 job_queue.put(job)
                 
@@ -248,21 +275,22 @@ def main():
             
             # Display status
             elapsed = int(current_time - event_start_time)
-            cv2.putText(annotated_frame, f"RECORDING ({elapsed}s) - People: {person_count}", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(annotated_frame, f"RECORDING ({elapsed}s) - People: {person_count} - Window: {len(frame_window)} frames", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
         # State 4: Motion Stopped
         elif not has_person and motion_detected:
-            print(f"\n{'='*70}")
+            print(f"\n{'='*50}")
             print("[ALERT] PERSON LEFT - Event Ended")
-            print(f"{'='*70}")
+            print(f"{'='*50}")
             
             motion_detected = False
             event_end_time = current_time
             event_duration = event_end_time - event_start_time
             
             print(f"[System] Event duration: {event_duration:.2f}s")
-            print(f"[System] Frames collected: {event_count}")
+            print(f"[System] Frames collected: {len(motion_segment_frames)}")
+            print(f"[System] Frames in final window: {len(frame_window)}")
             
             # Save video segment
             video_path = os.path.join(config.TEMP_VIDEO_DIR, f"{current_event_id}.mp4")
@@ -281,6 +309,7 @@ def main():
             motion_segment_frames = []
             frame_event_start = None
             frame_previous_live = None
+            frame_window = []  # Clear sliding window
         
         # State 1: Idle
         else:
@@ -298,11 +327,11 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
     
-    print("\n" + "="*70)
+    print("\n" + "="*50)
     print("[System] Video processing finished.")
     print(f"[System] Total events captured: {len(all_events)}")
     print(f"[System] Total frames processed: {frame_count}")
-    print("="*70 + "\n")
+    print("="*50 + "\n")
     
     # NOW: Combine all event videos and send to AI ONCE
     if all_events:
@@ -324,10 +353,10 @@ def main():
     else:
         print("[System] No events captured - skipping AI analysis")
     
-    print("\n" + "="*70)
+    print("\n" + "="*50)
     print("[System] Waiting for background analysis to complete...")
     print("[System] Please be patient - AI may take 60-120 seconds")
-    print("="*70 + "\n")
+    print("="*50 + "\n")
     sys.stdout.flush()
     
     # Signal worker to finish and wait
@@ -343,9 +372,9 @@ def main():
     sys.stdout.flush()
     time.sleep(3)  # Increased from 2 to 3 seconds
     
-    print("\n" + "="*70)
+    print("\n" + "="*50)
     print("[System] All background tasks complete. Ready for Q&A.")
-    print("="*70 + "\n")
+    print("="*50 + "\n")
     sys.stdout.flush()
 
     # Q&A Loop
